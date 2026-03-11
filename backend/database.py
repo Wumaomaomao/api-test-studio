@@ -18,6 +18,8 @@ class Project(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True, nullable=True, comment="Project name")
+    base_url = Column(String, nullable=True, comment="Base URL for the project")
+    openapi_content = Column(JSON, nullable=True, comment="OpenAPI file content")
 
 class Api(Base):
     __tablename__ = "apis"
@@ -49,4 +51,3 @@ class TestCase(Base):
     path_params = Column(JSON, default={})
 
     body_params = Column(JSON, default={})
-    
