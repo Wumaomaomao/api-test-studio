@@ -1,11 +1,15 @@
 # API Test Studio
 
+![API Test Studio 预览](docs/platform.png)
+
 一个结合了AI应用和测试专家知识用于 REST API 管理与自动化测试的小工具，包含：
 
 - 前端：React + Vite
 - 后端：FastAPI + SQLAlchemy
 
 支持项目与接口管理、接口调试、参数约束与依赖生成、自动化测试执行与报告查看。
+
+此外，这个项目是我和copilot(claude haiku + gpt codex)共同完成的，是一次和ai合作的demo实践，可能在代码规范、鲁棒性上存在一些改进空间。
 
 ## 环境要求
 
