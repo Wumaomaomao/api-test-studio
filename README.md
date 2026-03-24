@@ -27,7 +27,9 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8080
 如需使用 AI 相关能力，请在 backend 目录下创建 .env 并配置：
 
 ```env
-OPENAI_API_KEY=your_api_key
+OPENAI_API_KEY=<your_api_key>
+OPENAI_MODEL=<model_name>
+OPENAI_API_BASE=<open_api_base_url>
 ```
 
 ### 2. 启动前端
