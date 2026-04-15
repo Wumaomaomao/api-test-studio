@@ -172,14 +172,23 @@ class ConstraintExtractor:
                     for media_type, content_info in request_body["content"].items():
                         if "schema" in content_info:
                             schema = content_info["schema"]
-                            body_info = {
-                                "name": "requestBody",
-                                "required": required,
-                                "type": schema.get("type", "object"),
-                                "description": schema.get("description", ""),
-                                "properties": schema.get("properties", {})
-                            }
-                            params_info["body"].append(body_info)
+                            
+                            # 处理两种格式：
+                            # 1. 数据库格式：schema 是 list，直接是参数数组
+                            if isinstance(schema, list):
+                                for param in schema:
+                                    if isinstance(param, dict):
+                                        params_info["body"].append(param)
+                            # 2. OpenAPI 格式：schema 是 dict，有嵌套结构
+                            elif isinstance(schema, dict):
+                                body_info = {
+                                    "name": "requestBody",
+                                    "required": required,
+                                    "type": schema.get("type", "object"),
+                                    "description": schema.get("description", ""),
+                                    "properties": schema.get("properties", {})
+                                }
+                                params_info["body"].append(body_info)
         
         return params_info
 

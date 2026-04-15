@@ -379,14 +379,23 @@ def _build_request_url(project: Project, api: Api, path_params: dict) -> str:
     return url
 
 
-def _execute_http_request(method: str, url: str, headers: dict, query: dict, body: dict):
+def _execute_http_request(method: str, url: str, headers: dict, query: dict, body: dict, body_type: str = 'application/json'):
     """Execute HTTP request and return status/headers/body."""
     method_upper = (method or "GET").upper()
     body = body or {}
     headers = headers or {}
     query = query or {}
 
+    # 根据 body_type 设置 Content-Type 请求头
+    if body and method_upper in ['POST', 'PUT', 'PATCH']:
+        if body_type not in headers.values() and 'Content-Type' not in headers:
+            headers['Content-Type'] = body_type
+
     start_time = time.time()
+
+    # 判断是否为 form-urlencoded 格式
+    content_type = headers.get('Content-Type', '').lower()
+    is_form_urlencoded = 'application/x-www-form-urlencoded' in content_type
 
     if method_upper == "GET":
         response = requests.get(url, headers=headers, params=query, timeout=30)
@@ -395,8 +404,8 @@ def _execute_http_request(method: str, url: str, headers: dict, query: dict, bod
             url,
             headers=headers,
             params=query,
-            json=body if isinstance(body, dict) else None,
-            data=body if isinstance(body, str) else None,
+            json=body if not is_form_urlencoded and isinstance(body, dict) else None,
+            data=body if is_form_urlencoded else None,
             timeout=30,
         )
     elif method_upper == "PUT":
@@ -404,8 +413,8 @@ def _execute_http_request(method: str, url: str, headers: dict, query: dict, bod
             url,
             headers=headers,
             params=query,
-            json=body if isinstance(body, dict) else None,
-            data=body if isinstance(body, str) else None,
+            json=body if not is_form_urlencoded and isinstance(body, dict) else None,
+            data=body if is_form_urlencoded else None,
             timeout=30,
         )
     elif method_upper == "DELETE":
@@ -415,8 +424,8 @@ def _execute_http_request(method: str, url: str, headers: dict, query: dict, bod
             url,
             headers=headers,
             params=query,
-            json=body if isinstance(body, dict) else None,
-            data=body if isinstance(body, str) else None,
+            json=body if not is_form_urlencoded and isinstance(body, dict) else None,
+            data=body if is_form_urlencoded else None,
             timeout=30,
         )
     else:
@@ -430,7 +439,8 @@ def _execute_http_request(method: str, url: str, headers: dict, query: dict, bod
 
     return {
         "status_code": response.status_code,
-        "headers": dict(response.headers),
+        "request_headers": headers,  # ← 返回实际发送的request headers（包括自动添加的Content-Type）
+        "response_headers": dict(response.headers),
         "body": response_body,
         "elapsed_ms": elapsed_ms,
     }
@@ -467,22 +477,60 @@ def _run_test_task(task_id: int):
             response_body = {}
             duration_ms = None
             error_message = None
+            url = None
+            request_headers = {}
+            request_query = {}
+            request_body = {}
 
             try:
+                print(f"\n=== 执行测试用例 (adopted_id={adopted.id}) ===")
+                print(f"adopted.headers_params: {adopted.headers_params}")
+                print(f"adopted.query_params: {adopted.query_params}")
+                print(f"adopted.body_params: {adopted.body_params}")
+                
                 url = _build_request_url(project, api, adopted.path_params or {})
+                
+                # 获取该 API 的默认 body_type
+                default_request_body = db.query(ApiRequestBody).filter(
+                    ApiRequestBody.api_id == api.id,
+                    ApiRequestBody.is_default == 1
+                ).first()
+                body_type = default_request_body.media_type if default_request_body else 'application/json'
+                
+                # 准备请求信息用于记录（处理headers_params可能是列表或字典的情况）
+                # 如果是列表格式（参数定义），转换为字典；如果是字典格式，直接使用
+                headers_raw = adopted.headers_params
+                if isinstance(headers_raw, list):
+                    # 列表格式：[{name: "X-Custom", type: "string", value: "test"}, ...]
+                    request_headers = {item.get("name"): item.get("value", "") for item in headers_raw if item.get("name")}
+                    print(f"DEBUG: Converted list headers to dict: {request_headers}")
+                else:
+                    # 字典格式：{name: value}
+                    request_headers = dict(headers_raw) if headers_raw else {}
+                
+                request_query = dict(adopted.query_params) if adopted.query_params else {}
+                request_body = dict(adopted.body_params) if adopted.body_params else {}
+                
+                # 调试日志
+                print(f"DEBUG: url={url}, headers={request_headers}, query={request_query}, body={request_body}")
+                print(f"DEBUG: adopted.headers_params raw value: {headers_raw}, type: {type(headers_raw)}")
+                
                 result = _execute_http_request(
                     method=api.method,
                     url=url,
-                    headers=adopted.headers_params or {},
-                    query=adopted.query_params or {},
-                    body=adopted.body_params or {},
+                    headers=request_headers,
+                    query=request_query,
+                    body=request_body,
+                    body_type=body_type,
                 )
 
                 actual_status = str(result["status_code"])
                 expected_status = str(adopted.expected_status or "200")
                 passed = 1 if actual_status == expected_status else 0
                 status = "passed" if passed else "failed"
-                response_headers = result["headers"]
+                # 使用实际发送的request headers（包括自动添加的Content-Type）
+                request_headers = result.get("request_headers", request_headers)
+                response_headers = result["response_headers"]
                 response_body = result["body"]
                 duration_ms = result["elapsed_ms"]
             except Exception as e:
@@ -497,6 +545,10 @@ def _run_test_task(task_id: int):
                 passed=passed,
                 duration_ms=duration_ms,
                 error_message=error_message,
+                request_url=url,
+                request_headers=json.dumps(request_headers) if request_headers else "{}",
+                request_body=json.dumps(request_body) if request_body else "{}",
+                request_query=json.dumps(request_query) if request_query else "{}",
                 response_headers=response_headers,
                 response_body=response_body,
                 executed_at=datetime.now().isoformat(),
@@ -730,19 +782,19 @@ async def extract_constraints_with_ai(
                         "schema": {"type": param.get("type", "string") if isinstance(param, dict) else "string"}
                     })
         
-        # 添加请求体参数
-        if "requestBody" not in swagger_doc:
-            request_bodies = db.query(ApiRequestBody).filter(ApiRequestBody.api_id == api_id).all()
-            if request_bodies:
-                for rb in request_bodies:
-                    if rb.is_default:
-                        swagger_doc["requestBody"] = {
-                            "required": True,
-                            "content": {
-                                rb.media_type: {"schema": rb.body_params or {}}
-                            }
+        # 添加请求体参数 - 优先从数据库读取
+        request_bodies = db.query(ApiRequestBody).filter(ApiRequestBody.api_id == api_id).all()
+        if request_bodies:
+            for rb in request_bodies:
+                if rb.is_default:
+                    swagger_doc["requestBody"] = {
+                        "required": True,
+                        "content": {
+                            rb.media_type: {"schema": rb.body_params or {}}
                         }
-                        break
+                    }
+                    break
+        # 如果数据库没有，则保持 OpenAPI 文档中的 requestBody（如果有的话）
         
         # 使用 AI 提取约束或依赖关系
         print(f"🔄 准备调用 AI 提取器...")
@@ -1758,6 +1810,30 @@ async def get_test_run_task_detail(task_id: int, db: Session = Depends(get_db)):
     details = []
     for r in results:
         tc = db.query(TestCase).filter(TestCase.id == r.test_case_id).first() if r.test_case_id else None
+        
+        # 安全地解析请求信息（可能是JSON字符串）
+        request_headers = {}
+        request_body = {}
+        request_query = {}
+        
+        if r.request_headers:
+            try:
+                request_headers = json.loads(r.request_headers) if isinstance(r.request_headers, str) else r.request_headers
+            except:
+                request_headers = {}
+        
+        if r.request_body:
+            try:
+                request_body = json.loads(r.request_body) if isinstance(r.request_body, str) else r.request_body
+            except:
+                request_body = {}
+        
+        if r.request_query:
+            try:
+                request_query = json.loads(r.request_query) if isinstance(r.request_query, str) else r.request_query
+            except:
+                request_query = {}
+        
         details.append(
             {
                 "id": r.id,
@@ -1771,6 +1847,10 @@ async def get_test_run_task_detail(task_id: int, db: Session = Depends(get_db)):
                 "actual_status": r.actual_status,
                 "duration_ms": r.duration_ms,
                 "error_message": r.error_message,
+                "request_url": r.request_url,
+                "request_headers": request_headers,
+                "request_body": request_body,
+                "request_query": request_query,
                 "response_headers": r.response_headers or {},
                 "response_body": r.response_body,
                 "executed_at": r.executed_at,

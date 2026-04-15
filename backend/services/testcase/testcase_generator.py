@@ -30,10 +30,13 @@ class TestCaseGenerator:
         desired_count: int = 5,
     ) -> List[Dict[str, Any]]:
         """
-        生成测试用例
+        生成测试用例 - 对半生成正向和异常输入
         
         通过笛卡尔积方式：从每个混合空间中选一个子空间，组合起来生成一个测试用例
-        如果生成的用例数量多于 desired_count，则随机选择指定数量的用例
+        特点：
+        1. 将组合分为 valid 和 invalid 两类
+        2. 对半选择，保证正向和异常用例数量接近
+        3. 正向用例需要验证所有参数都来自 valid 类型的参数空间
         
         Args:
             api_id: API ID
@@ -66,11 +69,42 @@ class TestCaseGenerator:
         # 笛卡尔积：生成所有子空间组合
         subspace_combinations = self._cartesian_product_subspaces(spaces_subspaces)
         
-        # 如果生成的组合数大于 desired_count，随机选择
-        if len(subspace_combinations) > desired_count:
-            selected_combinations = random.sample(subspace_combinations, desired_count)
-        else:
-            selected_combinations = subspace_combinations
+        # 分离 valid 和 invalid 组合
+        valid_combinations = []
+        invalid_combinations = []
+        
+        for combo in subspace_combinations:
+            # 检查子空间类型：如果所有都是 valid，则归类为 valid 组合
+            subspace_types = [subspace.get("type", "valid") for _, subspace in combo]
+            if all(st == "valid" for st in subspace_types):
+                valid_combinations.append(combo)
+            else:
+                invalid_combinations.append(combo)
+        
+        print(f"\n📊 【用例分类统计】valid 组合: {len(valid_combinations)}, invalid 组合: {len(invalid_combinations)}")
+        
+        # 对半选择：计算 valid 和 invalid 应各占多少
+        valid_target = desired_count // 2
+        invalid_target = desired_count - valid_target
+        
+        # 从两类中随机选择
+        selected_valid = random.sample(valid_combinations, min(len(valid_combinations), valid_target))
+        selected_invalid = random.sample(invalid_combinations, min(len(invalid_combinations), invalid_target))
+        
+        # 如果某类数量不足，用另一类补充
+        if len(selected_valid) < valid_target and len(invalid_combinations) > len(selected_invalid):
+            need_more = valid_target - len(selected_valid)
+            more_invalid = [c for c in invalid_combinations if c not in selected_invalid]
+            selected_valid.extend(random.sample(more_invalid, min(len(more_invalid), need_more)))
+        
+        if len(selected_invalid) < invalid_target and len(valid_combinations) > len(selected_valid):
+            need_more = invalid_target - len(selected_invalid)
+            more_valid = [c for c in valid_combinations if c not in selected_valid]
+            selected_invalid.extend(random.sample(more_valid, min(len(more_valid), need_more)))
+        
+        selected_combinations = selected_valid + selected_invalid
+        
+        print(f"📋 【最终选择】valid 用例: {len(selected_valid)}, invalid 用例: {len(selected_invalid)}")
         
         # 每个组合生成一个测试用例
         for combo_idx, subspace_combo in enumerate(selected_combinations):
@@ -161,7 +195,11 @@ class TestCaseGenerator:
         # 收集所有参数
         all_parameter_list = list(merged_single_param_spaces_mapping.keys())
         
-        print(f"\n🔍 【生成测试用例调试信息】API ID: {api_id}, Combo #{combo_idx}")
+        # 判断用例类型：如果包含任何invalid子空间，则为异常输入，否则为正向用例
+        case_type = "异常输入" if "invalid" in subspace_types else "正向用例"
+        must_be_valid = case_type == "正向用例"  # 正向用例需要验证参数都是valid
+        
+        print(f"\n🔍 【生成测试用例调试信息】API ID: {api_id}, Combo #{combo_idx}, 类型: {case_type}")
         print(f"  空间名称: {space_names}")
         print(f"  合并后的参数列表: {all_parameter_list}")
         print(f"  API 查询参数: {[p.get('name') for p in api_info.get('query_params', [])]}")
@@ -175,6 +213,7 @@ class TestCaseGenerator:
             parameter_list=all_parameter_list,
             single_param_spaces_mapping=merged_single_param_spaces_mapping,
             single_spaces=single_spaces,
+            must_be_valid=must_be_valid,
         )
         
         print(f"  生成的查询参数: {query_params}")
@@ -185,9 +224,6 @@ class TestCaseGenerator:
         # 构造测试用例名称
         test_case_name = f"Case#{combo_idx} - {' + '.join(space_names)}"
         description = " | ".join(subspace_descriptions)
-        
-        # 判断用例类型：如果包含任何invalid子空间，则为异常输入，否则为正向用例
-        case_type = "异常输入" if "invalid" in subspace_types else "正向用例"
         
         test_case = {
             "api_id": api_id,
@@ -211,6 +247,7 @@ class TestCaseGenerator:
         parameter_list: List[str],
         single_param_spaces_mapping: Dict[str, List[Dict[str, Any]]],
         single_spaces: Dict[str, List[Dict[str, Any]]],
+        must_be_valid: bool = False,
     ) -> Tuple[Dict, Dict, Dict, Dict]:
         """
         生成参数值
@@ -218,9 +255,12 @@ class TestCaseGenerator:
         核心算法：
         1. 对于每个参数名 param_name in parameter_list
         2. 从 single_param_spaces_mapping[param_name] 获取分类列表
-        3. 从分类列表中采样一个值（优先 invalid，再选 valid）
+        3. 从分类列表中采样一个值
         4. 使用分类名称从 single_spaces[param_name] 中查找对应的 sample_value
         5. 根据参数位置（query/path/headers/body）放入对应字典
+        
+        Args:
+            must_be_valid: 若为True，则只使用valid类型的参数(主要用于正向用例)
         
         Returns:
             (query_params, path_params, headers_params, body_params)
@@ -236,7 +276,7 @@ class TestCaseGenerator:
         api_headers_params = api_info.get("headers_params", [])
         api_body_params = api_info.get("body_params", [])
         
-        print(f"\n  📝 【参数生成过程】共 {len(parameter_list)} 个参数要处理")
+        print(f"\n  📝 【参数生成过程】共 {len(parameter_list)} 个参数要处理，must_be_valid={must_be_valid}")
         
         # 遍历参数列表
         for param_name in parameter_list:
@@ -250,6 +290,7 @@ class TestCaseGenerator:
                 param_name=param_name,
                 categories=categories,
                 single_spaces=single_spaces,
+                must_be_valid=must_be_valid,
             )
             
             print(f"      采样结果: sample_value={sample_value}")
@@ -258,7 +299,16 @@ class TestCaseGenerator:
             if sample_value is None and param_name in single_spaces:
                 param_categories = single_spaces[param_name]
                 if isinstance(param_categories, list) and param_categories:
-                    first_cat = param_categories[0]
+                    # 如果 must_be_valid，只考虑 valid 分类
+                    if must_be_valid:
+                        valid_cats = [c for c in param_categories if c.get("type") == "valid"]
+                        if valid_cats:
+                            first_cat = valid_cats[0]
+                        else:
+                            first_cat = param_categories[0]
+                    else:
+                        first_cat = param_categories[0]
+                    
                     if isinstance(first_cat, dict):
                         sample_value = first_cat.get("sample_value")
                         if sample_value is None:
@@ -300,32 +350,44 @@ class TestCaseGenerator:
         param_name: str,
         categories: List[Dict[str, Any]],
         single_spaces: Dict[str, List[Dict[str, Any]]],
+        must_be_valid: bool = False,
     ) -> Any:
         """
         从分类列表中采样值
         
         核心逻辑：
-        1. 从 categories 中随机选一个 category_name
-        2. 然后用 category_name 去 single_spaces 中查找对应的分类
-        3. 从该分类的 sample_values 中随机选一个值
+        1. 如果 must_be_valid，先过滤出仅 valid 类型的分类
+        2. 从分类中随机选一个 category_name
+        3. 然后用 category_name 去 single_spaces 中查找对应的分类
+        4. 从该分类的 sample_values 中随机选一个值
         
         Args:
             param_name: 参数名，如 "language"
             categories: 子空间中的分类列表（包含 category_name, type, description）
             single_spaces: 单参数空间（包含 category_name 对应的 sample_values 数组）
+            must_be_valid: 若为True，只从valid分类中采样
         
         Returns:
             采样得到的值，或 None
         """
         import random
         
-        print(f"        【_sample_from_categories】参数: {param_name}, 分类数: {len(categories)}")
+        print(f"        【_sample_from_categories】参数: {param_name}, 分类数: {len(categories)}, must_be_valid: {must_be_valid}")
         if categories:
             print(f"          第1个分类数据: {categories[0]}")
         
         if not categories:
             print(f"          ❌ 没有可用的分类")
             return None
+        
+        # 如果 must_be_valid，过滤出仅 valid 分类
+        if must_be_valid:
+            valid_categories = [c for c in categories if c.get("type") == "valid"]
+            if valid_categories:
+                categories = valid_categories
+                print(f"          🔒 must_be_valid=True，已过滤为 valid 分类: {len(categories)} 个")
+            else:
+                print(f"          ⚠️  must_be_valid=True，但找不到 valid 分类，使用全部分类")
         
         # Step 1: 从 categories 中随机选择一个
         selected_category = random.choice(categories)

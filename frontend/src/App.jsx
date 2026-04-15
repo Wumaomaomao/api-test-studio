@@ -163,7 +163,34 @@ function App() {
       
       // 加载参数约束数据
       if (apiData) {
-        setSingleConstraints(apiData.single_constraints || {});
+        // 规范化约束格式：处理可能来自AI生成或手动编辑的两种格式
+        const normalizedConstraints = {};
+        const rawConstraints = apiData.single_constraints || {};
+        for (const [key, value] of Object.entries(rawConstraints)) {
+          // 处理两种格式：
+          // 1. AI生成格式：{parameter_name: 'xx', location: 'query', constraint: 'xx'}
+          // 2. 手动编辑格式：{location: 'query', constraint: 'xx'}
+          if (value.parameter_name) {
+            // AI生成格式：以 parameter_name 为 key
+            normalizedConstraints[value.parameter_name] = {
+              location: value.location || 'query',
+              constraint: value.constraint || ''
+            };
+          } else if (value.parameter?.name) {
+            // 旧格式：嵌套 parameter 对象
+            normalizedConstraints[value.parameter.name] = {
+              location: value.parameter.location || 'query',
+              constraint: value.constraint || ''
+            };
+          } else {
+            // 手动编辑格式：key 就是参数名
+            normalizedConstraints[key] = {
+              location: value.location || 'query',
+              constraint: value.constraint || ''
+            };
+          }
+        }
+        setSingleConstraints(normalizedConstraints);
         setDependencies(Array.isArray(apiData.dependencies) ? apiData.dependencies : []);
         setConstraintsTab('single');
       } else {
@@ -658,12 +685,18 @@ function App() {
         // 自动保存依赖关系到数据库
         try {
           const saveDepsFormData = new FormData();
+          saveDepsFormData.append('headers_params', JSON.stringify(headers));
+          saveDepsFormData.append('query_params', JSON.stringify(queryParams));
+          saveDepsFormData.append('path_params', JSON.stringify(pathParams));
+          saveDepsFormData.append('body_type', bodyType === 'json' ? 'application/json' : bodyType === 'xml' ? 'application/xml' : 'application/x-www-form-urlencoded');
+          saveDepsFormData.append('body_params', JSON.stringify(bodyFormData.length > 0 ? bodyFormData.map(b => ({name: b.key, value: b.value, type: b.type, required: b.required})) : []));
+          saveDepsFormData.append('single_constraints', JSON.stringify(singleConstraints));
           saveDepsFormData.append('dependencies', JSON.stringify(extractedData));
           
           const saveRes = await fetch(
-            `${API_BASE_URL}/projects/${selectedProjectId}/apis/${selectedApi}/save-dependencies`,
+            `${API_BASE_URL}/projects/${selectedProjectId}/apis/${selectedApi}`,
             {
-              method: 'POST',
+              method: 'PUT',
               body: saveDepsFormData,
             }
           );
@@ -677,12 +710,61 @@ function App() {
         }
         
         const depCount = Object.keys(extractedData).length;
-        setStatusMsg(`✅ 成功生成 ${depCount} 条参数依赖关系`);
+        setStatusMsg(`✅ 成功生成 ${depCount} 条参数依赖关系并已自动保存`);
       } else {
-        // 处理单参数约束
-        setSingleConstraints(extractedData);
-        const constraintCount = Object.keys(extractedData).length;
-        setStatusMsg(`✅ 成功生成 ${constraintCount} 条约束`);
+        // 处理单参数约束 - 规范化格式
+        const normalizedConstraints = {};
+        for (const [key, value] of Object.entries(extractedData)) {
+          // 处理 AI 生成的格式：{parameter_name: 'xx', location: 'query', constraint: 'xx'}
+          if (value.parameter_name) {
+            normalizedConstraints[value.parameter_name] = {
+              location: value.location || 'query',
+              constraint: value.constraint || ''
+            };
+          } else if (value.parameter?.name) {
+            normalizedConstraints[value.parameter.name] = {
+              location: value.parameter.location || 'query',
+              constraint: value.constraint || ''
+            };
+          } else {
+            // 如果已经是规范化格式
+            normalizedConstraints[key] = {
+              location: value.location || 'query',
+              constraint: value.constraint || ''
+            };
+          }
+        }
+        setSingleConstraints(normalizedConstraints);
+        
+        // 自动保存单参数约束到数据库
+        try {
+          const saveSingleFormData = new FormData();
+          saveSingleFormData.append('headers_params', JSON.stringify(headers));
+          saveSingleFormData.append('query_params', JSON.stringify(queryParams));
+          saveSingleFormData.append('path_params', JSON.stringify(pathParams));
+          saveSingleFormData.append('body_type', bodyType === 'json' ? 'application/json' : bodyType === 'xml' ? 'application/xml' : 'application/x-www-form-urlencoded');
+          saveSingleFormData.append('body_params', JSON.stringify(bodyFormData.length > 0 ? bodyFormData.map(b => ({name: b.key, value: b.value, type: b.type, required: b.required})) : []));
+          saveSingleFormData.append('single_constraints', JSON.stringify(normalizedConstraints));
+          saveSingleFormData.append('dependencies', JSON.stringify(dependencies));
+          
+          const saveRes = await fetch(
+            `${API_BASE_URL}/projects/${selectedProjectId}/apis/${selectedApi}`,
+            {
+              method: 'PUT',
+              body: saveSingleFormData,
+            }
+          );
+          
+          if (!saveRes.ok) {
+            const saveError = await saveRes.json();
+            console.warn('Failed to save constraints:', saveError);
+          }
+        } catch (saveError) {
+          console.warn('Error saving constraints:', saveError);
+        }
+        
+        const constraintCount = Object.keys(normalizedConstraints).length;
+        setStatusMsg(`✅ 成功生成 ${constraintCount} 条约束并已自动保存`);
       }
       
       // 关闭模态框并重置状态

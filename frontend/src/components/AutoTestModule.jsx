@@ -22,9 +22,13 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
   const [isGenerating, setIsGenerating] = useState(false);
   const [partitionResult, setPartitionResult] = useState(null);
   
-  // 完整流程生成结果（SISP, MISP前后）
-  const [fullPipelineResult, setFullPipelineResult] = useState(null);
-  const [showResultModal, setShowResultModal] = useState(false);
+  // 生成进度状态
+  const [generationSteps, setGenerationSteps] = useState([
+    { id: 'single_param', name: '单参数等价类', status: 'pending' },
+    { id: 'multi_param', name: '多参数组合', status: 'pending' },
+    { id: 'space_relation', name: '识别输入空间关联', status: 'pending' },
+    { id: 'testcase_gen', name: '测试用例生成', status: 'pending' },
+  ]);
   
   // 用例详情查看
   const [selectedTestCase, setSelectedTestCase] = useState(null);
@@ -49,9 +53,21 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
       
       if (typeof singleConstraints === 'object' && singleConstraints !== null) {
         Object.entries(singleConstraints).forEach(([param, constraint]) => {
+          // 处理两种约束格式
+          let constraintName = '';
+          if (typeof constraint === 'object' && constraint.constraint !== undefined) {
+            // 新格式：{location: '...', constraint: '...'}
+            constraintName = `${param} - ${constraint.constraint}`;
+          } else if (typeof constraint === 'string') {
+            // 旧格式或简单字符串
+            constraintName = `${param} - ${constraint}`;
+          } else {
+            constraintName = param;
+          }
+          
           constraints.push({
             id: `single_${param}`,
-            name: `${param} - ${constraint}`,
+            name: constraintName,
             type: 'single'
           });
         });
@@ -262,6 +278,21 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
     setSelectedCaseTypes([]);
     setGenerateCount(5);
     setPartitionResult(null);
+    // 重置生成步骤
+    setGenerationSteps([
+      { id: 'single_param', name: '单参数等价类', status: 'pending' },
+      { id: 'multi_param', name: '多参数组合', status: 'pending' },
+      { id: 'space_relation', name: '识别输入空间关联', status: 'pending' },
+      { id: 'testcase_gen', name: '测试用例生成', status: 'pending' },
+    ]);
+  };
+
+  const updateGenerationStep = (stepId, status) => {
+    setGenerationSteps(prev =>
+      prev.map(step =>
+        step.id === stepId ? { ...step, status } : step
+      )
+    );
   };
 
   // 过滤当前项目的用例
@@ -466,6 +497,51 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
                       <div style={{fontSize: '12px', color: '#94a3b8', marginTop: '4px'}}>最多生成50个用例</div>
                     </div>
 
+                    {/* 生成进度显示 */}
+                    {isGenerating && (
+                      <div style={{marginBottom: '16px', padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px', border: '1px solid #bfdbfe'}}>
+                        <div style={{fontSize: '14px', fontWeight: 'bold', color: '#1e40af', marginBottom: '12px'}}>
+                          生成进度
+                        </div>
+                        {generationSteps.map((step) => (
+                          <div key={step.id} style={{marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px'}}>
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '50%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '12px',
+                              fontWeight: 'bold',
+                              color: '#fff',
+                              backgroundColor:
+                                step.status === 'completed' ? '#10b981' :
+                                step.status === 'in-progress' ? '#f59e0b' :
+                                step.status === 'failed' ? '#ef4444' :
+                                '#cbd5e1'
+                            }}>
+                              {step.status === 'completed' ? '✓' :
+                               step.status === 'in-progress' ? '...' :
+                               step.status === 'failed' ? '✕' :
+                               '○'}
+                            </div>
+                            <span style={{
+                              fontSize: '13px',
+                              color:
+                                step.status === 'completed' ? '#059669' :
+                                step.status === 'in-progress' ? '#d97706' :
+                                step.status === 'failed' ? '#dc2626' :
+                                '#94a3b8',
+                              fontWeight: step.status === 'in-progress' ? 'bold' : 'normal'
+                            }}>
+                              {step.name}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <div style={{...styles.modalFooter, marginTop: '20px'}}>
                       <button
                         onClick={handleAiGenerateClose}
@@ -481,6 +557,14 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
                           }
 
                           setIsGenerating(true);
+                          // 重置生成步骤为进行中
+                          setGenerationSteps([
+                            { id: 'single_param', name: '单参数等价类', status: 'in-progress' },
+                            { id: 'multi_param', name: '多参数组合', status: 'pending' },
+                            { id: 'space_relation', name: '识别输入空间关联', status: 'pending' },
+                            { id: 'testcase_gen', name: '测试用例生成', status: 'pending' },
+                          ]);
+                          
                           try {
                             // 第一步：调用后端生成完整的输入空间划分流程
                             console.log('🔄 第1步：生成输入空间划分...');
@@ -491,6 +575,7 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
 
                             if (!partitionResponse.ok) {
                               const errorData = await partitionResponse.json();
+                              updateGenerationStep('single_param', 'failed');
                               alert(`输入空间生成失败: ${errorData.detail || '未知错误'}`);
                               return;
                             }
@@ -498,15 +583,27 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
                             const partitionResult = await partitionResponse.json();
                             
                             if (partitionResult.status !== 'success') {
+                              updateGenerationStep('single_param', 'failed');
                               alert('输入空间生成失败: 返回数据格式错误');
                               return;
                             }
 
                             console.log('✅ 第1步完成：输入空间划分生成成功', partitionResult);
-                            alert(`✅ 步骤1完成：生成完整的输入空间划分\n- 单参数空间: ${partitionResult.single_spaces.count}个参数\n- 多参数空间(混合前): ${partitionResult.multi_spaces_before.count}个空间\n- 多参数空间(混合后): ${partitionResult.multi_spaces_after.count}个空间`);
+                            // 更新单参数、多参数和关联识别为完成状态
+                            updateGenerationStep('single_param', 'completed');
+                            updateGenerationStep('multi_param', 'in-progress');
+                            
+                            // 稍微延迟显示后续步骤，使进度更可见
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            updateGenerationStep('multi_param', 'completed');
+                            updateGenerationStep('space_relation', 'in-progress');
+                            await new Promise(resolve => setTimeout(resolve, 300));
+                            updateGenerationStep('space_relation', 'completed');
 
                             // 第二步：生成具体的测试用例
                             console.log('🔄 第2步：生成测试用例...', `请求${generateCount}个用例`);
+                            updateGenerationStep('testcase_gen', 'in-progress');
+                            
                             const testCaseResponse = await fetch(`http://localhost:8080/projects/${selectedProject}/apis/${selectedApi.id}/generate-test-cases`, {
                               method: 'POST',
                               headers: { 'Content-Type': 'application/json' },
@@ -515,6 +612,7 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
 
                             if (!testCaseResponse.ok) {
                               const errorData = await testCaseResponse.json();
+                              updateGenerationStep('testcase_gen', 'failed');
                               alert(`测试用例生成失败: ${errorData.detail || '未知错误'}`);
                               return;
                             }
@@ -522,22 +620,26 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
                             const testCasesResult = await testCaseResponse.json();
                             
                             if (testCasesResult.status !== 'success') {
+                              updateGenerationStep('testcase_gen', 'failed');
                               alert('测试用例生成失败: 返回数据格式错误');
                               return;
                             }
 
                             console.log('✅ 第2步完成：测试用例生成成功', testCasesResult);
-                            alert(`✅ 步骤2完成：生成测试用例成功\n- 总用例数: ${testCasesResult.count}个`);
+                            updateGenerationStep('testcase_gen', 'completed');
 
                             // 生成接口已自动落库，刷新当前API用例
                             await loadCasesFromDatabase(selectedProject, selectedApi);
 
-                            setFullPipelineResult(partitionResult);
-                            setShowResultModal(true);
+                            await new Promise(resolve => setTimeout(resolve, 1000)); // 展示完成状态
                             handleAiGenerateClose();
-                            alert(`✅ 成功生成并保存${testCasesResult.count}个测试用例！`);
 
                           } catch (error) {
+                            setGenerationSteps(prev =>
+                              prev.map(step =>
+                                step.status === 'in-progress' ? { ...step, status: 'failed' } : step
+                              )
+                            );
                             alert(`生成失败: ${error.message}`);
                             console.error('生成流程错误:', error);
                           } finally {
@@ -915,154 +1017,6 @@ export default function AutoTestModule({ projects, apis, styles, onTaskCreated }
           </div>
         )}
       </div>
-
-      {/* 完整生成流程结果展示模态框 */}
-      {showResultModal && fullPipelineResult && (
-        <>
-          <div style={styles.backdrop} onClick={() => setShowResultModal(false)}></div>
-          <div style={{...styles.modal, width: '80%', maxHeight: '90vh', overflow: 'auto'}}>
-            <div style={{...styles.modalHeader, display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-              <h2>✅ 完整输入空间生成结果</h2>
-              <button 
-                onClick={() => setShowResultModal(false)}
-                style={{background: 'none', border: 'none', fontSize: '24px', cursor: 'pointer'}}
-              >×</button>
-            </div>
-
-            <div style={{padding: '20px', fontSize: '14px', lineHeight: '1.6', color: '#333'}}>
-              <div style={{marginBottom: '20px', padding: '12px', backgroundColor: '#eff6ff', borderRadius: '4px', borderLeft: '4px solid #3b82f6'}}>
-                <div style={{fontSize: '12px', color: '#666'}}>缓存状态</div>
-                <div style={{display: 'flex', gap: '20px', marginTop: '8px'}}>
-                  <div>
-                    <span style={{fontSize: '12px', fontWeight: 'bold'}}>SISP (单参数空间):</span>
-                    <span style={{
-                      marginLeft: '8px',
-                      padding: '2px 8px',
-                      borderRadius: '3px',
-                      backgroundColor: fullPipelineResult.from_cache?.sisp ? '#dcfce7' : '#fef3c7',
-                      color: fullPipelineResult.from_cache?.sisp ? '#166534' : '#92400e',
-                      fontSize: '12px'
-                    }}>
-                      {fullPipelineResult.from_cache?.sisp ? '📦 从缓存读取' : '✨ 新生成'}
-                    </span>
-                  </div>
-                  <div>
-                    <span style={{fontSize: '12px', fontWeight: 'bold'}}>MISP (多参数空间):</span>
-                    <span style={{
-                      marginLeft: '8px',
-                      padding: '2px 8px',
-                      borderRadius: '3px',
-                      backgroundColor: fullPipelineResult.from_cache?.misp ? '#dcfce7' : '#fef3c7',
-                      color: fullPipelineResult.from_cache?.misp ? '#166534' : '#92400e',
-                      fontSize: '12px'
-                    }}>
-                      {fullPipelineResult.from_cache?.misp ? '📦 从缓存读取' : '✨ 新生成'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{marginBottom: '20px'}}>
-                <h3 style={{color: '#8b5cf6', marginBottom: '10px'}}>📊 生成统计</h3>
-                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '15px'}}>
-                  <div style={{padding: '10px', backgroundColor: '#f0f4ff', borderRadius: '4px'}}>
-                    <div style={{fontSize: '12px', color: '#666'}}>单参数空间 (SISP)</div>
-                    <div style={{fontSize: '20px', fontWeight: 'bold', color: '#8b5cf6'}}>
-                      {fullPipelineResult.single_spaces.count} 参数
-                    </div>
-                  </div>
-                  <div style={{padding: '10px', backgroundColor: '#f5f0ff', borderRadius: '4px'}}>
-                    <div style={{fontSize: '12px', color: '#666'}}>多参数空间 - 混合前</div>
-                    <div style={{fontSize: '20px', fontWeight: 'bold', color: '#6d28d9'}}>
-                      {fullPipelineResult.multi_spaces_before.count} 空间
-                    </div>
-                  </div>
-                  <div style={{padding: '10px', backgroundColor: '#f9f5ff', borderRadius: '4px'}}>
-                    <div style={{fontSize: '12px', color: '#666'}}>多参数空间 - 混合后</div>
-                    <div style={{fontSize: '20px', fontWeight: 'bold', color: '#5b21b6'}}>
-                      {fullPipelineResult.multi_spaces_after.count} 空间
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div style={{marginBottom: '20px'}}>
-                <h3 style={{color: '#8b5cf6', marginBottom: '10px'}}>📝 单参数列表 (SISP)</h3>
-                <div style={{
-                  backgroundColor: '#f9f5ff',
-                  padding: '10px',
-                  borderRadius: '4px',
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: '8px'
-                }}>
-                  {fullPipelineResult.single_spaces.parameters.map((param, idx) => (
-                    <span key={idx} style={{
-                      backgroundColor: '#e9d5ff',
-                      padding: '4px 8px',
-                      borderRadius: '3px',
-                      fontSize: '12px'
-                    }}>
-                      {param}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div style={{marginBottom: '20px'}}>
-                <h3 style={{color: '#8b5cf6', marginBottom: '10px'}}>🔗 多参数空间 - 混合前 (示例前2个)</h3>
-                <pre style={{
-                  backgroundColor: '#f5f3ff',
-                  padding: '10px',
-                  borderRadius: '4px',
-                  overflow: 'auto',
-                  fontSize: '12px'
-                }}>
-                  {JSON.stringify(fullPipelineResult.multi_spaces_before.spaces, null, 2)}
-                </pre>
-              </div>
-
-              <div style={{marginBottom: '20px'}}>
-                <h3 style={{color: '#8b5cf6', marginBottom: '10px'}}>🎯 多参数空间 - 混合后 (示例前2个)</h3>
-                <pre style={{
-                  backgroundColor: '#faf5ff',
-                  padding: '10px',
-                  borderRadius: '4px',
-                  overflow: 'auto',
-                  fontSize: '12px'
-                }}>
-                  {JSON.stringify(fullPipelineResult.multi_spaces_after.spaces, null, 2)}
-                </pre>
-              </div>
-            </div>
-
-            <div style={{...styles.modalFooter, display: 'flex', justifyContent: 'flex-end', gap: '10px'}}>
-              <button 
-                onClick={() => setShowResultModal(false)}
-                style={styles.cancelBtn}
-              >
-                关闭
-              </button>
-              <button 
-                onClick={() => {
-                  // 导出为JSON文件
-                  const dataStr = JSON.stringify(fullPipelineResult, null, 2);
-                  const dataBlob = new Blob([dataStr], { type: 'application/json' });
-                  const url = URL.createObjectURL(dataBlob);
-                  const link = document.createElement('a');
-                  link.href = url;
-                  link.download = `partition_result_api_${fullPipelineResult.api_id}_${new Date().getTime()}.json`;
-                  link.click();
-                  URL.revokeObjectURL(url);
-                }}
-                style={{...styles.confirmBtn, backgroundColor: '#10b981'}}
-              >
-                导出JSON
-              </button>
-            </div>
-          </div>
-        </>
-      )}
     </div>
   );
 }

@@ -171,6 +171,11 @@ class TestRunResult(Base):
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(String, nullable=True)
 
+    request_url = Column(String, nullable=True, comment="The constructed request URL")
+    request_headers = Column(String, nullable=True, comment="The request headers (JSON string)")
+    request_body = Column(String, nullable=True, comment="The request body (JSON string)")
+    request_query = Column(String, nullable=True, comment="The request query parameters (JSON string)")
+
     response_headers = Column(JSON, default={})
     response_body = Column(JSON, default={})
     executed_at = Column(String, nullable=True)
@@ -192,3 +197,7 @@ def run_lightweight_migrations():
     _ensure_sqlite_column("test_cases", "adopted", "INTEGER DEFAULT 0")
     _ensure_sqlite_column("test_cases", "created_at", "VARCHAR")
     _ensure_sqlite_column("adopted_test_cases", "source_test_case_id", "INTEGER")
+    _ensure_sqlite_column("test_run_results", "request_url", "TEXT")
+    _ensure_sqlite_column("test_run_results", "request_headers", "TEXT")
+    _ensure_sqlite_column("test_run_results", "request_body", "TEXT")
+    _ensure_sqlite_column("test_run_results", "request_query", "TEXT")

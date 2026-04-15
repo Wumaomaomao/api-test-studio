@@ -762,58 +762,34 @@ export default function ApiManagement({
                       <table style={styles.paramsTable}>
                         <thead>
                           <tr style={styles.tableHeader}>
-                            <th style={{...styles.tableCell, width: '80px'}}>约束ID</th>
-                            <th style={styles.tableCell}>参数名</th>
+                            <th style={{...styles.tableCell, width: '120px'}}>参数名</th>
                             <th style={{...styles.tableCell, width: '80px'}}>参数位置</th>
-                            <th style={styles.tableCell}>约束描述</th>
+                            <th style={{...styles.tableCell, flex: 1}}>约束描述</th>
                             <th style={{...styles.tableCell, width: '60px'}}>操作</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {Object.entries(singleConstraints).map(([key, constraint]) => (
-                            <tr key={key} style={styles.tableRow}>
-                              <td style={{...styles.tableCell, width: '80px'}}>
+                          {Object.entries(singleConstraints).map(([paramName, constraint]) => (
+                            <tr key={paramName} style={styles.tableRow}>
+                              <td style={{...styles.tableCell, width: '120px'}}>
                                 <input 
                                   type="text" 
-                                  value={key}
-                                  onChange={(e) => {
-                                    const newValue = e.target.value;
-                                    const newConstraints = {...singleConstraints};
-                                    if (newValue !== key && newValue.trim()) {
-                                      newConstraints[newValue] = newConstraints[key];
-                                      delete newConstraints[key];
-                                      setSingleConstraints(newConstraints);
-                                    }
-                                  }}
-                                  placeholder="约束ID"
-                                  style={{...styles.paramInput, fontSize: '11px'}}
-                                />
-                              </td>
-                              <td style={styles.tableCell}>
-                                <input 
-                                  type="text" 
-                                  value={constraint.parameter?.name || ''}
-                                  onChange={(e) => {
-                                    const newConstraints = {...singleConstraints};
-                                    newConstraints[key].parameter = {
-                                      ...newConstraints[key].parameter,
-                                      name: e.target.value
-                                    };
-                                    setSingleConstraints(newConstraints);
-                                  }}
+                                  value={paramName}
+                                  disabled={true}
                                   placeholder="参数名"
-                                  style={styles.paramInput}
+                                  style={{...styles.paramInput, backgroundColor: '#f1f5f9', color: '#64748b'}}
                                 />
                               </td>
                               <td style={{...styles.tableCell, width: '80px'}}>
                                 <select 
-                                  value={constraint.parameter?.location || 'query'}
+                                  value={constraint.location || constraint.parameter?.location || 'query'}
                                   onChange={(e) => {
                                     const newConstraints = {...singleConstraints};
-                                    newConstraints[key].parameter = {
-                                      ...newConstraints[key].parameter,
-                                      location: e.target.value
-                                    };
+                                    if (constraint.parameter) {
+                                      newConstraints[paramName].parameter.location = e.target.value;
+                                    } else {
+                                      newConstraints[paramName].location = e.target.value;
+                                    }
                                     setSingleConstraints(newConstraints);
                                   }}
                                   style={styles.paramSelect}
@@ -824,12 +800,12 @@ export default function ApiManagement({
                                   <option value="body">body</option>
                                 </select>
                               </td>
-                              <td style={{...styles.tableCell, minWidth: '250px'}}>
+                              <td style={{...styles.tableCell, flex: 1, minWidth: '200px'}}>
                                 <textarea 
                                   value={constraint.constraint || ''}
                                   onChange={(e) => {
                                     const newConstraints = {...singleConstraints};
-                                    newConstraints[key].constraint = e.target.value;
+                                    newConstraints[paramName].constraint = e.target.value;
                                     setSingleConstraints(newConstraints);
                                   }}
                                   placeholder="约束描述（自然语言）"
@@ -847,7 +823,7 @@ export default function ApiManagement({
                                   style={styles.deleteParamBtn}
                                   onClick={() => {
                                     const newConstraints = {...singleConstraints};
-                                    delete newConstraints[key];
+                                    delete newConstraints[paramName];
                                     setSingleConstraints(newConstraints);
                                   }}
                                 >
@@ -862,13 +838,19 @@ export default function ApiManagement({
                       <button 
                         style={styles.addParamBtn}
                         onClick={() => {
-                          const newId = `constraint_${Date.now()}`;
-                          const newConstraints = {...singleConstraints};
-                          newConstraints[newId] = {
-                            parameter: {name: '', location: 'query'},
-                            constraint: ''
-                          };
-                          setSingleConstraints(newConstraints);
+                          const paramName = prompt('请输入参数名：');
+                          if (paramName && paramName.trim()) {
+                            const newConstraints = {...singleConstraints};
+                            if (!(paramName in newConstraints)) {
+                              newConstraints[paramName] = {
+                                location: 'query',
+                                constraint: ''
+                              };
+                              setSingleConstraints(newConstraints);
+                            } else {
+                              alert('该参数约束已存在');
+                            }
+                          }
                         }}
                       >
                         + 添加约束
